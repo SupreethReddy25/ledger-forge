@@ -24,3 +24,24 @@ exports.createFriend = async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
+exports.getFriends = async (req, res) => {
+  try {
+
+    const { user_id } = req.params;
+
+    const result = await pool.query(
+      `SELECT *
+       FROM friends
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [user_id]
+    );
+
+    res.json(result.rows);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
