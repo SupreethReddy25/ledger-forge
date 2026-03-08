@@ -26,3 +26,20 @@ exports.createUser = async (req, res) => {
     });
   }
 };
+
+exports.getUsers = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, email, created_at
+       FROM users
+       ORDER BY created_at DESC`
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Internal server error"
+    });
+  }
+};
