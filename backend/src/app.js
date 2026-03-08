@@ -15,3 +15,6 @@ app.get("/health", (req, res) => {
 app.use("/users", userRoutes);
 
 module.exports = app;
+
+const friendRoutes = require("./routes/friendRoutes");
+app.use("/friends", friendRoutes);
