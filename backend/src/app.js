@@ -18,3 +18,6 @@ module.exports = app;
 
 const friendRoutes = require("./routes/friendRoutes");
 app.use("/friends", friendRoutes);
+
+const transactionRoutes = require("./routes/transactionRoutes");
+app.use("/transactions", transactionRoutes);
