@@ -6,18 +6,23 @@ exports.getFriendBalances = async (req, res) => {
     const { user_id } = req.params;
 
     const result = await pool.query(
-      `SELECT 
-          friend_id,
-          SUM(
-            CASE 
-              WHEN type IN ('expense','lend') THEN amount
-              WHEN type = 'settlement' THEN -amount
+    `
+    SELECT 
+        f.id AS friend_id,
+        f.name AS friend_name,
+        SUM(
+            CASE
+                WHEN t.type IN ('expense','lend') THEN t.amount
+                WHEN t.type = 'settlement' THEN -t.amount
             END
-          ) AS balance
-       FROM transactions
-       WHERE user_id = $1
-       GROUP BY friend_id`,
-      [user_id]
+        ) AS balance
+    FROM transactions t
+    JOIN friends f ON t.friend_id = f.id
+    WHERE t.user_id = $1
+    GROUP BY f.id, f.name
+    ORDER BY f.name;
+    `,
+    [user_id]
     );
 
     res.json(result.rows);

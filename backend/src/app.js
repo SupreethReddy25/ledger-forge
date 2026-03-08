@@ -24,3 +24,6 @@ app.use("/transactions", transactionRoutes);
 
 const balanceRoutes = require("./routes/balanceRoutes");
 app.use("/balances", balanceRoutes);
+
+const settlementRoutes = require("./routes/settlementRoutes");  
+app.use("/settlements", settlementRoutes);
