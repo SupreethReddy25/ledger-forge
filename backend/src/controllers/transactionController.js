@@ -27,3 +27,26 @@ exports.createTransaction = async (req, res) => {
     });
   }
 };
+
+exports.getTransactionsByFriend = async (req, res) => {
+  try {
+
+    const { friend_id } = req.params;
+
+    const result = await pool.query(
+      `SELECT *
+       FROM transactions
+       WHERE friend_id = $1
+       ORDER BY created_at DESC`,
+      [friend_id]
+    );
+
+    res.json(result.rows);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: "Internal server error"
+    });
+  }
+};
