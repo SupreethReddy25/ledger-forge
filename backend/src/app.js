@@ -21,3 +21,6 @@ app.use("/friends", friendRoutes);
 
 const transactionRoutes = require("./routes/transactionRoutes");
 app.use("/transactions", transactionRoutes);
+
+const balanceRoutes = require("./routes/balanceRoutes");
+app.use("/balances", balanceRoutes);
