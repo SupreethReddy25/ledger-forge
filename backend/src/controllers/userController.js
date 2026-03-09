@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { normalizeText } = require("../utils/validators");
 
 exports.createUser = async (req, res) => {
   try {
@@ -10,17 +11,40 @@ exports.createUser = async (req, res) => {
       });
     }
 
+    const safeName = normalizeText(name, 120);
+    const safeEmail = String(email).trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!safeName) {
+      return res.status(400).json({
+        error: "Name cannot be empty"
+      });
+    }
+
+    if (!emailRegex.test(safeEmail)) {
+      return res.status(400).json({
+        error: "Email format is invalid"
+      });
+    }
+
     const result = await pool.query(
       `INSERT INTO users (name, email)
        VALUES ($1, $2)
        RETURNING *`,
-      [name, email]
+      [safeName, safeEmail]
     );
 
     res.status(201).json(result.rows[0]);
 
   } catch (err) {
     console.error(err);
+
+    if (err.code === "23505") {
+      return res.status(409).json({
+        error: "User with this email already exists"
+      });
+    }
+
     res.status(500).json({
       error: "Internal server error"
     });
