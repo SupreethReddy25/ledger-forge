@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const { isUUID, clampInteger } = require("../utils/validators");
+const { balanceCaseExpression } = require("../utils/ledgerMath");
 
 exports.getAnalyticsOverview = async (req, res) => {
   try {
@@ -26,17 +27,12 @@ exports.getAnalyticsOverview = async (req, res) => {
            SELECT
              date_trunc('month', created_at) AS month_start,
              COALESCE(
-               SUM(
-                 CASE
-                   WHEN type IN ('expense', 'lend') THEN amount
-                   WHEN type = 'settlement' THEN -amount
-                   ELSE 0
-                 END
-               ),
+               SUM(${balanceCaseExpression()}),
                0
              ) AS net_change,
              COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expense_total,
              COALESCE(SUM(CASE WHEN type = 'lend' THEN amount ELSE 0 END), 0) AS lend_total,
+             COALESCE(SUM(CASE WHEN type = 'debt' THEN amount ELSE 0 END), 0) AS debt_total,
              COALESCE(SUM(CASE WHEN type = 'settlement' THEN amount ELSE 0 END), 0) AS settlement_total
            FROM transactions
            WHERE user_id = $1
@@ -50,6 +46,7 @@ exports.getAnalyticsOverview = async (req, res) => {
            COALESCE(tx.net_change, 0) AS net_change,
            COALESCE(tx.expense_total, 0) AS expense_total,
            COALESCE(tx.lend_total, 0) AS lend_total,
+           COALESCE(tx.debt_total, 0) AS debt_total,
            COALESCE(tx.settlement_total, 0) AS settlement_total
          FROM month_series ms
          LEFT JOIN tx ON tx.month_start = ms.month_start
@@ -61,13 +58,7 @@ exports.getAnalyticsOverview = async (req, res) => {
            f.id AS friend_id,
            f.name AS friend_name,
            COALESCE(
-             SUM(
-               CASE
-                 WHEN t.type IN ('expense', 'lend') THEN t.amount
-                 WHEN t.type = 'settlement' THEN -t.amount
-                 ELSE 0
-               END
-             ),
+             SUM(${balanceCaseExpression("t")}),
              0
            ) AS balance
          FROM friends f
@@ -78,13 +69,7 @@ exports.getAnalyticsOverview = async (req, res) => {
          GROUP BY f.id, f.name
          ORDER BY ABS(
            COALESCE(
-             SUM(
-               CASE
-                 WHEN t.type IN ('expense', 'lend') THEN t.amount
-                 WHEN t.type = 'settlement' THEN -t.amount
-                 ELSE 0
-               END
-             ),
+             SUM(${balanceCaseExpression("t")}),
              0
            )
          ) DESC, f.name ASC

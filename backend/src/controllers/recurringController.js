@@ -1,4 +1,6 @@
 const pool = require("../config/db");
+const { appendLedgerEvent } = require("../services/ledgerEventService");
+const { createLedgerTransaction } = require("../services/transactionWriteService");
 const {
   isUUID,
   toPositiveNumber,
@@ -7,7 +9,7 @@ const {
 } = require("../utils/validators");
 
 const FREQUENCIES = new Set(["weekly", "monthly"]);
-const TRANSACTION_TYPES = new Set(["expense", "lend", "settlement"]);
+const TRANSACTION_TYPES = new Set(["expense", "lend", "debt", "settlement"]);
 
 function addFrequency(dateString, frequency) {
   const date = new Date(`${dateString}T00:00:00.000Z`);
@@ -26,6 +28,8 @@ function todayISO() {
 }
 
 exports.createRecurringRule = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const {
       user_id,
@@ -52,7 +56,7 @@ exports.createRecurringRule = async (req, res) => {
 
     if (!TRANSACTION_TYPES.has(type)) {
       return res.status(400).json({
-        error: "type must be one of expense, lend, settlement"
+        error: "type must be one of expense, lend, debt, settlement"
       });
     }
 
@@ -75,7 +79,7 @@ exports.createRecurringRule = async (req, res) => {
       });
     }
 
-    const friendOwnership = await pool.query(
+    const friendOwnership = await client.query(
       `SELECT 1
        FROM friends
        WHERE id = $1 AND user_id = $2`,
@@ -88,7 +92,9 @@ exports.createRecurringRule = async (req, res) => {
       });
     }
 
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    const result = await client.query(
       `INSERT INTO recurring_rules
        (user_id, friend_id, type, amount, description, frequency, next_due_date)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -104,10 +110,26 @@ exports.createRecurringRule = async (req, res) => {
       ]
     );
 
+    await appendLedgerEvent(client, {
+      userId: user_id,
+      aggregateType: "recurring_rule",
+      aggregateId: result.rows[0].id,
+      eventType: "recurring_rule.created",
+      actor: "user",
+      payload: {
+        recurring_rule: result.rows[0]
+      }
+    });
+
+    await client.query("COMMIT");
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release();
   }
 };
 
@@ -140,6 +162,8 @@ exports.getRecurringRules = async (req, res) => {
 };
 
 exports.updateRecurringRule = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const { rule_id } = req.params;
     const {
@@ -205,7 +229,7 @@ exports.updateRecurringRule = async (req, res) => {
     if (type !== undefined) {
       if (!TRANSACTION_TYPES.has(type)) {
         return res.status(400).json({
-          error: "type must be one of expense, lend, settlement"
+          error: "type must be one of expense, lend, debt, settlement"
         });
       }
       values.push(type);
@@ -230,7 +254,9 @@ exports.updateRecurringRule = async (req, res) => {
 
     values.push(rule_id);
 
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    const result = await client.query(
       `UPDATE recurring_rules
        SET ${updates.join(", ")}
        WHERE id = $${values.length}
@@ -239,15 +265,32 @@ exports.updateRecurringRule = async (req, res) => {
     );
 
     if (result.rowCount === 0) {
+      await client.query("ROLLBACK");
       return res.status(404).json({
         error: "Recurring rule not found"
       });
     }
 
+    await appendLedgerEvent(client, {
+      userId: result.rows[0].user_id,
+      aggregateType: "recurring_rule",
+      aggregateId: result.rows[0].id,
+      eventType: "recurring_rule.updated",
+      actor: "user",
+      payload: {
+        recurring_rule: result.rows[0]
+      }
+    });
+
+    await client.query("COMMIT");
+
     res.json(result.rows[0]);
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error(err);
     res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release();
   }
 };
 
@@ -286,22 +329,19 @@ exports.runRecurringRules = async (req, res) => {
 
       // hard stop protects against accidental runaway loops in malformed data
       while (nextDue <= today && iterations < 120) {
-        await client.query(
-          `INSERT INTO transactions
-           (user_id, friend_id, type, amount, description, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6::timestamp)`,
-          [
-            rule.user_id,
-            rule.friend_id,
-            rule.type,
-            rule.amount,
-            normalizeText(
-              `${rule.description || "Recurring transaction"} [Auto-generated]`,
-              500
-            ),
-            `${nextDue}T10:00:00.000Z`
-          ]
-        );
+        await createLedgerTransaction(client, {
+          userId: rule.user_id,
+          friendId: rule.friend_id,
+          type: rule.type,
+          amount: Number(rule.amount),
+          description: normalizeText(
+            `${rule.description || "Recurring transaction"} [Auto-generated]`,
+            500
+          ),
+          createdAt: `${nextDue}T10:00:00.000Z`,
+          actor: "scheduler",
+          source: "recurring_rule"
+        });
 
         generatedCount += 1;
         iterations += 1;
@@ -319,6 +359,18 @@ exports.runRecurringRules = async (req, res) => {
         rule_id: rule.id,
         generated_transactions: iterations,
         updated_next_due_date: nextDue
+      });
+
+      await appendLedgerEvent(client, {
+        userId: rule.user_id,
+        aggregateType: "recurring_rule",
+        aggregateId: rule.id,
+        eventType: "recurring_rule.executed",
+        actor: "scheduler",
+        payload: {
+          generated_transactions: iterations,
+          next_due_date: nextDue
+        }
       });
     }
 
